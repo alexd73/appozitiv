@@ -1,0 +1,5 @@
+name = appozitiv
+description = Перенос отзывов из базы приложения appozitiv
+core = 7.x
+
+package = Custom

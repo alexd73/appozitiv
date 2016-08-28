@@ -1,0 +1,136 @@
+<?php
+/**
+ * @file
+ * Перенос отзывов из базы приложения appozitiv
+ */
+
+define('APPOZITIV_PATH', drupal_get_path('module', 'appozitiv'));
+
+/**
+ * Implements hook_cron().
+ */
+function appozitiv_cron() {
+  appozitiv_create_otzivi(appozitiv_get_comments());
+}
+
+/**
+ * Implements hook_init().
+ */
+function appozitiv_init() {
+}
+
+/**
+ * Implements hook_node_delete().
+ */
+function appozitiv_node_delete($node) {
+  // Удаляем соответсвие в базе
+  if ($node->type == 'otzivi') {
+    db_delete('appozitiv')
+      ->condition('nid', $node->nid)
+      ->execute();
+  }
+}
+
+function appozitiv_get_comments() {
+  // выборка значений acid, для коммнентариев,
+  // уже загруженных в базу (есть соответсвие - исключаем из выборки)
+  $excludes = db_select('appozitiv', 'a')
+    ->fields('a')
+    ->execute()
+    ->fetchAll();
+  $exclude_acids = array();
+  foreach ($excludes as $item) {
+    $exclude_acids[] = $item->acid;
+  }
+
+  // Переключаемся на базу appozitiv
+  // База данных настраивается в settings.php
+  db_set_active('appozitiv');
+  if (empty($exclude_acids)) {
+    $comments = db_select('comments', 'c')
+      ->fields('c')
+      ->condition('type', 2)
+      ->condition('visible', 1)
+      ->condition('id_clinic', 1)
+      ->execute()
+      ->fetchAll();
+  }
+  else {
+    $comments = db_select('comments', 'c')
+      ->fields('c')
+      ->condition('id', $exclude_acids, 'NOT IN')
+      ->condition('type', 2)
+      ->condition('visible', 1)
+      ->condition('id_clinic', 1)
+      ->execute()
+      ->fetchAll();
+  };
+
+  drupal_static_reset();
+  db_set_active();
+  dpm($comments);
+  return $comments;
+}
+
+function appozitiv_create_otzivi($comments) {
+  foreach ($comments as $comment) {
+    //Создать пользователя
+    $new_user_values = array(
+      'name' => $comment->name,
+      'mail' => $comment->mail,
+      'pass' => 'pHa7-wumaDre',
+      'access' => 0,
+      'status' => 0
+    );
+    $user_exists = db_select('users', 'u')
+      ->fields('u')
+      ->condition('mail', $new_user_values['mail'])
+      ->execute()
+      ->fetchAll();
+    if ($user_exists) {
+      watchdog('appozitiv', 'Пользователь @name, c электропочтой @mail существет - не создаем',
+        array(
+          '@name' => $user_exists['0']->name,
+          '@mail' => $user_exists['0']->mail
+        )
+      );
+      $user = $user_exists['0'];
+    } else {
+      watchdog('appozitiv', 'Пользователь @name, c электропочтой @mail не существет - создаем',
+        array(
+          '@name' => $new_user_values['name'],
+          '@mail' => $new_user_values['mail']
+        )
+      );
+      $user = user_save(NULL, $new_user_values);
+    }
+
+    //Создать ноду
+    $uid = $user->uid;
+    $values = array(
+      'type' => 'otzivi',
+      'uid' => $uid,
+      'status' => 1,
+      'comment' => 0,
+      'promote' => 0
+    );
+    $entity = entity_create('node', $values);
+    $ewrapper = entity_metadata_wrapper('node', $entity);
+    $ewrapper->title->set('Отзыв от ' . $user->name);
+    $ewrapper->body->set(array('value' => $comment->text));
+    $date = new DateTime($comment->date);
+    $entity->date = $comment->date;
+    $entity->created = $date->getTimestamp();
+    $entity->changed = $date->getTimestamp();
+    $entity->timestamp = $date->getTimestamp();
+    $ewrapper->save();
+
+    // записать соответсвие в базу
+    $id = db_insert('appozitiv')
+      ->fields(array(
+        'acid' => $comment->id,
+        'nid' => $entity->nid,
+      ))
+      ->execute();
+  }
+}

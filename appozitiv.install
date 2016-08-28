@@ -1,0 +1,28 @@
+<?php
+
+function appozitiv_schema() {
+  $schema['appozitiv'] = array(
+    'description' => 'The table for sync with appozitiv app in appozitiv module.',
+    'fields' => array(
+      'acid' => array(
+        'description' => t('Appozitiv comment id'),
+        'type' => 'int',
+        'unsigned' => true,
+        'not null' => true,
+      ),
+      'nid' => array(
+        'description' => t('Node ID'),
+        'type' => 'int',
+        'unsigned' => true,
+        'not null' => true,
+      ),
+    ),
+    'primary key' => array('acid'),
+  );
+
+  return $schema;
+}
+
+function appozitiv_uninstall() {
+  drupal_uninstall_schema('appozitiv');
+}
