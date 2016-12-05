@@ -1,7 +1,7 @@
 <?php
 /**
  * @file
- * Перенос отзывов из базы приложения appozitiv
+ * Перенос отзывов из базы приложения appotziv
  */
 
 define('APPOZITIV_PATH', drupal_get_path('module', 'appozitiv'));
@@ -11,12 +11,6 @@ define('APPOZITIV_PATH', drupal_get_path('module', 'appozitiv'));
  */
 function appozitiv_cron() {
   appozitiv_create_otzivi(appozitiv_get_comments());
-}
-
-/**
- * Implements hook_init().
- */
-function appozitiv_init() {
 }
 
 /**
@@ -46,47 +40,30 @@ function appozitiv_get_comments() {
   // Переключаемся на базу appozitiv
   // База данных настраивается в settings.php
   db_set_active('appozitiv');
-  if (empty($exclude_acids)) {
-    $comments = db_select('comments', 'c')
-      ->fields('c')
-      ->condition('type', 2)
-      ->condition('visible', 1)
-      ->condition('id_clinic', 1)
-      ->execute()
-      ->fetchAll();
-  }
-  else {
-    $comments = db_select('comments', 'c')
-      ->fields('c')
-      ->condition('id', $exclude_acids, 'NOT IN')
-      ->condition('type', 2)
-      ->condition('visible', 1)
-      ->condition('id_clinic', 1)
-      ->execute()
-      ->fetchAll();
-  };
+  $query = db_select('comments', 'c')
+    ->fields('c')
+    ->condition('type', 2)
+    ->condition('visible', 1)
+    ->condition('id_clinic', 1);
 
+  if (!empty($exclude_acids)) {
+    $query->condition('id', $exclude_acids, 'NOT IN');
+  };
+  $comments = $query->execute()->fetchAll();
   drupal_static_reset();
   db_set_active();
-  dpm($comments);
   return $comments;
 }
 
 function appozitiv_create_otzivi($comments) {
   foreach ($comments as $comment) {
     //Создать пользователя
-    $new_user_values = array(
-      'name' => $comment->name,
-      'mail' => $comment->mail,
-      'pass' => 'pHa7-wumaDre',
-      'access' => 0,
-      'status' => 0
-    );
-    $user_exists = db_select('users', 'u')
-      ->fields('u')
-      ->condition('mail', $new_user_values['mail'])
-      ->execute()
-      ->fetchAll();
+//    $user_exists = db_select('users', 'u')
+//      ->fields('u')
+//      ->condition('mail', $new_user_values['mail'])
+//      ->execute()
+//      ->fetchAll();
+    $user_exists = user_load_by_mail($comment->mail);
     if ($user_exists) {
       watchdog('appozitiv', 'Пользователь @name, c электропочтой @mail существет - не создаем',
         array(
@@ -96,13 +73,20 @@ function appozitiv_create_otzivi($comments) {
       );
       $user = $user_exists['0'];
     } else {
+      $new_user_values = array(
+        'name' => $comment->name,
+        'mail' => $comment->mail,
+        'pass' => 'pHa7-wumaDre',
+        'access' => 0,
+        'status' => 0
+      );
       watchdog('appozitiv', 'Пользователь @name, c электропочтой @mail не существет - создаем',
         array(
           '@name' => $new_user_values['name'],
           '@mail' => $new_user_values['mail']
         )
       );
-      $user = user_save(NULL, $new_user_values);
+      $user = user_save($new_user_values);
     }
 
     //Создать ноду
@@ -121,8 +105,6 @@ function appozitiv_create_otzivi($comments) {
     $date = new DateTime($comment->date);
     $entity->date = $comment->date;
     $entity->created = $date->getTimestamp();
-    $entity->changed = $date->getTimestamp();
-    $entity->timestamp = $date->getTimestamp();
     $ewrapper->save();
 
     // записать соответсвие в базу
@@ -133,4 +115,46 @@ function appozitiv_create_otzivi($comments) {
       ))
       ->execute();
   }
+}
+
+
+/**
+ * Implements hook_webform_submission_insert().
+ *
+ */
+function appozitiv_webform_submission_insert($node, $submission) {
+  $visable = 0;
+  watchdog('app', '<pre>' . print_r( $submission, true) . '</pre>');
+  if ($submission->nid != '56026') {
+    return;
+  }
+  db_set_active('appozitiv');
+  $id = db_insert('comments')
+    ->fields(array(
+      'id_clinic' => 1, //TODO указать текущий домен
+      'name' => $submission->data[1][0],
+      'mail' => $submission->data[2][0],
+      'text' => $submission->data[3][0],
+      'date' => date("Y-m-d H:i:s"),
+      'type' => 1,
+      'visible' => $visable,
+    ))
+    ->execute();
+
+  drupal_static_reset();
+  db_set_active();
+  if ($id > 0) {
+    watchdog('appozitiv', 'Создана запись в базе отзывов за №@id',
+      array(
+        '@id' => $id,
+      )
+    );
+    if ($visable != 0) {
+      appozitiv_create_otzivi(appozitiv_get_comments());
+    }
+  } else {
+    watchdog('appozitiv', 'Не удалось создать запись с отзывами');
+  }
+
+
 }
